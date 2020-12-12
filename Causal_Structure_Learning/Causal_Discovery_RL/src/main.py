@@ -36,6 +36,15 @@ import matplotlib
 matplotlib.use('Agg')
 
 
+# def build_target_update(from_scope, to_scope, TAU=8e-2):
+#     from_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=from_scope)
+#     to_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=to_scope)
+#
+#     op = []
+#     for v1, v2 in zip(from_vars, to_vars):
+#         op.append(v2.assign(v1))
+#     return op
+
 def main():
     # Setup for output directory and logging
     output_dir = 'output/{}'.format(datetime.now(timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d_%H-%M-%S-%f')[:-3])
@@ -65,22 +74,22 @@ def main():
 
     # Log the configuration parameters
     _logger.info('Configuration parameters: {}'.format(vars(config)))    # Use vars to convert config to dict for logging
-    
+
     if config.read_data:
         file_path = '{}/data.npy'.format(config.data_path)
         solution_path = '{}/DAG.npy'.format(config.data_path)
         training_set = DataGenerator_read_data(file_path, solution_path, config.normalize, config.transpose)
     else:
         raise ValueError("Only support importing data from existing files")
-        
+
     # set penalty weights
     score_type = config.score_type
     reg_type = config.reg_type
-    
+
     if config.lambda_flag_default:
-        
+
         sl, su, strue = BIC_lambdas(training_set.inputdata, None, None, training_set.true_graph.T, reg_type, score_type)
-        
+
         lambda1 = 0
         lambda1_upper = 5
         lambda1_update_add = 1
@@ -93,7 +102,7 @@ def main():
         _logger.info('Original sl: {}, su: {}, strue: {}'.format(sl, su, strue))
         _logger.info('Transfomed sl: {}, su: {}, lambda2: {}, true: {}'.format(sl, su, lambda2,
                      (strue-sl)/(su-sl)*lambda1_upper))
-        
+
     else:
         # test choices for the case with manually provided bounds
         # not fully tested
@@ -111,18 +120,20 @@ def main():
         lambda2_upper = 0.01
         lambda2_update_mul = config.lambda2_update
         lambda_iter_num = config.lambda_iter_num
-        
+
     # actor
-    actor = Actor(config)
+    with tf.variable_scope("t"):
+        actor = Actor(config)
 
     callreward = get_Reward(actor.batch_size, config.max_length, actor.input_dimension, training_set.inputdata,
                             sl, su, lambda1_upper, score_type, reg_type, config.l1_graph_reg, False)
+
 
     _logger.info('Finished creating training dataset, actor model and reward class')
 
     # Saver to save & restore all the variables.
     variables_to_save = [v for v in tf.global_variables() if 'Adam' not in v.name]
-    saver = tf.train.Saver(var_list=variables_to_save, keep_checkpoint_every_n_hours=1.0)  
+    saver = tf.train.Saver(var_list=variables_to_save, keep_checkpoint_every_n_hours=1.0)
 
     _logger.info('Starting session...')
     sess_config = tf.ConfigProto(log_device_placement=False)
@@ -140,33 +151,47 @@ def main():
         rewards_avg_baseline = []
         rewards_batches = []
         reward_max_per_batch = []
-        
+
         lambda1s = []
         lambda2s = []
-        
+
         graphss = []
         probsss = []
         max_rewards = []
         max_reward = float('-inf')
         image_count = 0
-        
+
         accuracy_res = []
         accuracy_res_pruned = []
-        
+
         max_reward_score_cyc = (lambda1_upper+1, 0)
 
         # Summary writer
         writer = tf.summary.FileWriter(config.summary_dir, sess.graph)
 
         _logger.info('Starting training.')
-            
+
+
+
+        graph_last_timestep = np.zeros([config.batch_size, config.max_length, config.max_length])
+
         for i in (range(1, config.nb_epoch + 1)):
+
 
             if config.verbose:
                 _logger.info('Start training for {}-th epoch'.format(i))
 
             input_batch = training_set.train_batch(actor.batch_size, actor.max_length, actor.input_dimension)
-            graphs_feed = sess.run(actor.graphs, feed_dict={actor.input_: input_batch})
+
+
+            graphs_feed, graph_last_timestep = sess.run([actor.graphs, actor.scores], feed_dict={actor.input_: input_batch, actor.graph_last_timestep:graph_last_timestep})
+
+            graph_last_timestep = np.array(graph_last_timestep)
+
+            graph_last_timestep = np.clip(np.transpose(graph_last_timestep, (1,0,2)), 0, 1)
+
+
+
             reward_feed = callreward.cal_rewards(graphs_feed, lambda1, lambda2)
 
             # max reward, max reward per batch
@@ -178,7 +203,7 @@ def main():
                 if reward_ < max_reward_batch:
                     max_reward_batch = reward_
                     max_reward_batch_score_cyc = (score_, cyc_)
-                        
+
             max_reward_batch = -max_reward_batch
 
             if max_reward < max_reward_batch:
@@ -187,12 +212,12 @@ def main():
 
             # for average reward per batch
             reward_batch_score_cyc = np.mean(reward_feed[:,1:], axis=0)
-                              
+
             if config.verbose:
                 _logger.info('Finish calculating reward for current batch of graph')
 
             # Get feed dict
-            feed = {actor.input_: input_batch, actor.reward_: -reward_feed[:,0], actor.graphs_:graphs_feed}
+            feed = {actor.input_: input_batch, actor.reward_: -reward_feed[:,0], actor.graphs_:graphs_feed, actor.graph_last_timestep: graph_last_timestep}
 
             summary, base_op, score_test, probs, graph_batch, \
                 reward_batch, reward_avg_baseline, train_step1, train_step2 = sess.run([actor.merged, actor.base_op,
@@ -201,7 +226,7 @@ def main():
 
             if config.verbose:
                 _logger.info('Finish updating actor and critic network using reward calculated')
-                    
+
             lambda1s.append(lambda1)
             lambda2s.append(lambda2)
 
@@ -212,12 +237,12 @@ def main():
             graphss.append(graph_batch)
             probsss.append(probs)
             max_rewards.append(max_reward_score_cyc)
-            
+
             # logging
             if i == 1 or i % 500 == 0:
                 if i >= 500:
                     writer.add_summary(summary,i)
-                    
+
                 _logger.info('[iter {}] reward_batch: {}, max_reward: {}, max_reward_batch: {}'.format(i,
                              reward_batch, max_reward, max_reward_batch))
                 # other logger info; uncomment if you want to check
@@ -234,7 +259,7 @@ def main():
                 plt.close()
 
                 image_count += 1
-                # this draw the average graph per batch. 
+                # this draw the average graph per batch.
                 # can be modified to draw the graph (with or w/o pruning) that has the best reward
                 fig = plt.figure(2)
                 fig.suptitle('Iteration: {}'.format(i))
@@ -246,7 +271,7 @@ def main():
                 ax.imshow(training_set.true_graph, cmap=plt.cm.gray)
                 plt.savefig('{}/recovered_graph_iteration_{}.png'.format(config.plot_dir, image_count))
                 plt.close()
-                    
+
             # update lambda1, lamda2
             if (i+1) % lambda_iter_num == 0:
                 ls_kv = callreward.update_all_scores(lambda1, lambda2)
@@ -262,7 +287,7 @@ def main():
                 pd.DataFrame(reward_max_per_batch_re).to_csv('{}/reward_max_batch.csv'.format(output_dir))
                 pd.DataFrame(lambda1s).to_csv('{}/lambda1s.csv'.format(output_dir))
                 pd.DataFrame(lambda2s).to_csv('{}/lambda2s.csv'.format(output_dir))
-                    
+
                 graph_int, score_min, cyc_min = np.int32(ls_kv[0][0]), ls_kv[0][1][1], ls_kv[0][1][-1]
 
                 if cyc_min < 1e-5:
@@ -271,7 +296,7 @@ def main():
                 lambda2 = min(lambda2*lambda2_update_mul, lambda2_upper)
                 _logger.info('[iter {}] lambda1 {}, upper {}, lambda2 {}, upper {}, score_min {}, cyc_min {}'.format(i+1,
                              lambda1, lambda1_upper, lambda2, lambda2_upper, score_min, cyc_min))
-                    
+
                 graph_batch = convert_graph_int_to_adj_mat(graph_int)
 
                 if reg_type == 'LR':
@@ -291,13 +316,13 @@ def main():
                                           acc_est['pred_size']
                 fdr2, tpr2, fpr2, shd2, nnz2 = acc_est2['fdr'], acc_est2['tpr'], acc_est2['fpr'], acc_est2['shd'], \
                                                acc_est2['pred_size']
-                    
+
                 accuracy_res.append((fdr, tpr, fpr, shd, nnz))
                 accuracy_res_pruned.append((fdr2, tpr2, fpr2, shd2, nnz2))
-                
+
                 np.save('{}/accuracy_res.npy'.format(output_dir), np.array(accuracy_res))
                 np.save('{}/accuracy_res2.npy'.format(output_dir), np.array(accuracy_res_pruned))
-                    
+
                 _logger.info('before pruning: fdr {}, tpr {}, fpr {}, shd {}, nnz {}'.format(fdr, tpr, fpr, shd, nnz))
                 _logger.info('after  pruning: fdr {}, tpr {}, fpr {}, shd {}, nnz {}'.format(fdr2, tpr2, fpr2, shd2, nnz2))
 

@@ -24,12 +24,16 @@ class SingleLayerDecoder(object):
         self.mask_scores = []
         self.entropy = []
 
-    def decode(self, encoder_output):
+        # addition:
+
+
+    def decode(self, encoder_output, cor_mat):
         # encoder_output is a tensor of size [batch_size, max_length, input_embed]
         with tf.variable_scope('singe_layer_nn'):
             W_l = tf.get_variable('weights_left', [self.input_embed, self.decoder_hidden_dim], initializer=self.initializer)
             W_r = tf.get_variable('weights_right', [self.input_embed, self.decoder_hidden_dim], initializer=self.initializer)
             U = tf.get_variable('U', [self.decoder_hidden_dim], initializer=self.initializer)    # Aggregate across decoder hidden dim
+
 
         dot_l = tf.einsum('ijk, kl->ijl', encoder_output, W_l)
         dot_r = tf.einsum('ijk, kl->ijl', encoder_output, W_r)
@@ -38,7 +42,7 @@ class SingleLayerDecoder(object):
         tiled_r = tf.tile(tf.expand_dims(dot_r, axis=1), (1, self.max_length, 1, 1))
 
         if self.decoder_activation == 'tanh':    # Original implementation by paper
-            final_sum = tf.nn.tanh(tiled_l + tiled_r)
+            final_sum = tf.nn.tanh(tiled_l + tiled_r + cor_mat) #TODO: cor_mat expand dim.
         elif self.decoder_activation == 'relu':
             final_sum = tf.nn.relu(tiled_l + tiled_r)
         elif self.decoder_activation == 'none':    # Without activation function

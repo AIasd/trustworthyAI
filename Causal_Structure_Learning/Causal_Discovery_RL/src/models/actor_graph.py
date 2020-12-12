@@ -28,8 +28,8 @@ class Actor(object):
         self.is_train = True
         # Data config
         self.batch_size = config.batch_size  # batch size
-        self.max_length = config.max_length  
-        self.input_dimension = config.input_dimension  
+        self.max_length = config.max_length
+        self.input_dimension = config.input_dimension
 
         # Reward config
         self.avg_baseline = tf.Variable(config.init_baseline, trainable=False,
@@ -51,6 +51,10 @@ class Actor(object):
         # Tensor block holding the input sequences [Batch Size, Sequence Length, Features]
         self.input_ = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.input_dimension],
                                      name="input_coordinates")
+
+        # addition:
+        self.graph_last_timestep = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.max_length], name="graph_last_timestep")
+
         self.reward_ = tf.placeholder(tf.float32, [self.batch_size], name='input_rewards')
         self.graphs_ = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.max_length], name='input_graphs')
 
@@ -59,6 +63,24 @@ class Actor(object):
         self.build_reward()
         self.build_optim()
         self.merged = tf.summary.merge_all()
+
+    # addition:
+    def build_additional_graph_backbone(self, in_tensor):
+        trainable = True
+        with tf.variable_scope("graph_last_timestep_encoder"):
+            in_tensor=tf.expand_dims(in_tensor, axis=3)
+
+            filter_1 = tf.Variable(tf.random_normal([1,1,1,10]), trainable=trainable)
+            filter_2 = tf.Variable(tf.random_normal([1,1,10,10]), trainable=trainable)
+            filter_3 = tf.Variable(tf.random_normal([1,1,10,1]), trainable=trainable)
+
+            h1 = tf.nn.conv2d(in_tensor, filter=filter_1, padding="SAME")
+            h1 = tf.nn.conv2d( tf.nn.relu(h1), filter=filter_2, padding="SAME" )
+            h1 = tf.nn.conv2d( tf.nn.relu(h1), filter=filter_3, padding="SAME" )
+
+
+        return h1
+
 
     def build_permutation(self):
         with tf.variable_scope("encoder"):
@@ -69,6 +91,7 @@ class Actor(object):
             else:
                 raise NotImplementedError('Current encoder type is not implemented yet!')
             self.encoder_output = encoder.encode(self.input_)
+            self.encoder_last_time_graph = self.build_additional_graph_backbone(self.graph_last_timestep)
 
         with tf.variable_scope('decoder'):
             if self.config.decoder_type == 'SingleLayerDecoder':
@@ -82,7 +105,7 @@ class Actor(object):
             else:
                 raise NotImplementedError('Current decoder type is not implemented yet!')
 
-            self.samples, self.scores, self.entropy = self.decoder.decode(self.encoder_output)
+            self.samples, self.scores, self.entropy = self.decoder.decode(self.encoder_output, self.encoder_last_time_graph)
 
             # self.samples is seq_lenthg * batch size * seq_length
             # cal cross entropy loss * reward
@@ -105,7 +128,7 @@ class Actor(object):
         with tf.variable_scope("critic"):
             # Critic predicts reward (parametric baseline for REINFORCE)
             self.critic = Critic(self.config, self.is_train)
-            self.critic.predict_rewards(self.encoder_output)
+            self.critic.predict_rewards(self.encoder_output, self.encoder_last_time_graph)
 
             variable_summaries('predictions', self.critic.predictions, with_max_min=True)
 
