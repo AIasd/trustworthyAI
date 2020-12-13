@@ -36,16 +36,6 @@ import matplotlib
 matplotlib.use('Agg')
 
 
-def discounted_rewards(r, gamma, V_end):
-    """ take 1D float array of rewards and compute discounted reward """
-    discounted_r = np.zeros_like(r)
-    running_sum = V_end
-    for i in reversed(range(0,len(r))):
-        discounted_r[i] = running_sum * gamma + r[i]
-        # print(i, gamma, running_sum, r[i], discounted_r[i])
-        running_sum = discounted_r[i]
-    return discounted_r
-
 def main():
     # Setup for output directory and logging
     output_dir = 'output/{}'.format(datetime.now(timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d_%H-%M-%S-%f')[:-3])
@@ -63,7 +53,6 @@ def main():
     config.summary_dir = '{}/summary'.format(output_dir)
     config.plot_dir = '{}/plot'.format(output_dir)
     config.graph_dir = '{}/graph'.format(output_dir)
-    config.use_trajectory = False
 
     # Create directory
     create_dir(config.summary_dir)
@@ -124,12 +113,10 @@ def main():
         lambda_iter_num = config.lambda_iter_num
 
     # actor
-    with tf.variable_scope("t"):
-        actor = Actor(config)
+    actor = Actor(config)
 
     callreward = get_Reward(actor.batch_size, config.max_length, actor.input_dimension, training_set.inputdata,
                             sl, su, lambda1_upper, score_type, reg_type, config.l1_graph_reg, False)
-
 
     _logger.info('Finished creating training dataset, actor model and reward class')
 
@@ -173,142 +160,44 @@ def main():
 
         _logger.info('Starting training.')
 
-
-
-        graph_last_timestep = np.zeros([config.batch_size, config.max_length, config.max_length])
-
         for i in (range(1, config.nb_epoch + 1)):
+
             if config.verbose:
                 _logger.info('Start training for {}-th epoch'.format(i))
 
+            input_batch = training_set.train_batch(actor.batch_size, actor.max_length, actor.input_dimension)
+            graphs_feed = sess.run(actor.graphs, feed_dict={actor.input_: input_batch})
+            reward_feed = callreward.cal_rewards(graphs_feed, lambda1, lambda2)
 
-            if i > 1 and config.trajectory_step > 1:
-                # print(np.array(states_cor_mat_list).shape, '\n'*20)
-                graph_last_timestep = states_cor_mat_list[1]
+            # max reward, max reward per batch
+            max_reward = -callreward.update_scores([max_reward_score_cyc], lambda1, lambda2)[0]
+            max_reward_batch = float('inf')
+            max_reward_batch_score_cyc = (0, 0)
 
-            states_np_list = []
-            states_cor_mat_list = []
-            actions_list = []
-            rewards_list = []
+            for reward_, score_, cyc_ in reward_feed:
+                if reward_ < max_reward_batch:
+                    max_reward_batch = reward_
+                    max_reward_batch_score_cyc = (score_, cyc_)
 
+            max_reward_batch = -max_reward_batch
 
+            if max_reward < max_reward_batch:
+                max_reward = max_reward_batch
+                max_reward_score_cyc = max_reward_batch_score_cyc
 
-            for j in range(1, config.trajectory_step+1):
-                input_batch = training_set.train_batch(actor.batch_size, actor.max_length, actor.input_dimension)
+            # for average reward per batch
+            reward_batch_score_cyc = np.mean(reward_feed[:,1:], axis=0)
 
-                states_np_list.append(input_batch)
-                states_cor_mat_list.append(graph_last_timestep)
+            if config.verbose:
+                _logger.info('Finish calculating reward for current batch of graph')
 
+            # Get feed dict
+            feed = {actor.input_: input_batch, actor.reward_: -reward_feed[:,0], actor.graphs_:graphs_feed}
 
-                graphs_feed, graph_last_timestep = sess.run([actor.graphs, actor.scores], feed_dict={
-                actor.input_: input_batch, actor.graph_last_timestep:graph_last_timestep,
-                actor.is_train:False})
-
-                graph_last_timestep = np.array(graph_last_timestep)
-                graph_last_timestep = np.clip(np.transpose(graph_last_timestep, (1,0,2)), 0, 1)
-
-                reward_feed = callreward.cal_rewards(graphs_feed, lambda1, lambda2)
-
-                # max reward, max reward per batch
-                max_reward = -callreward.update_scores([max_reward_score_cyc], lambda1, lambda2)[0]
-                max_reward_batch = float('inf')
-                max_reward_batch_score_cyc = (0, 0)
-
-                for reward_, score_, cyc_ in reward_feed:
-                    if reward_ < max_reward_batch:
-                        max_reward_batch = reward_
-                        max_reward_batch_score_cyc = (score_, cyc_)
-
-                max_reward_batch = -max_reward_batch
-
-                if max_reward < max_reward_batch:
-                    max_reward = max_reward_batch
-                    max_reward_score_cyc = max_reward_batch_score_cyc
-
-                # for average reward per batch
-                reward_batch_score_cyc = np.mean(reward_feed[:,1:], axis=0)
-
-                if config.verbose:
-                    _logger.info('Finish calculating reward for current batch of graph')
-
-                actions_list.append(graphs_feed)
-                rewards_list.append(-reward_feed[:, 0])
-
-
-            states_np = np.array(states_np_list)
-            rewards = np.array(rewards_list)
-            actions = np.array(actions_list)
-            states_cor_mat = np.array(states_cor_mat_list)
-
-            feed = {
-            actor.input_: states_np[-1],
-            # actor.reward_: -reward_feed[:,0],
-            actor.graphs_:graphs_feed,
-            actor.graph_last_timestep: graph_last_timestep,
-            actor.is_train:False}
-
-            V_end = np.array(sess.run([actor.critic.predictions], feed_dict=feed))
-
-            # print('\n'*20, np.array(rewards).shape, np.array(V_end).shape)
-            V_value = discounted_rewards(rewards, config.gamma, V_end)
-
-
-            states_np = np.reshape(states_np, (config.batch_size * config.trajectory_step, config.max_length, -1))
-
-            states_cor_mat = np.reshape(states_cor_mat, (config.batch_size * config.trajectory_step, config.max_length, -1))
-
-            V_value = np.reshape(V_value, [config.batch_size*config.trajectory_step])
-
-            rewards = np.reshape(rewards, [config.batch_size*config.trajectory_step])
-
-
-            actions = np.reshape(actions, [config.batch_size*config.trajectory_step, config.max_length, -1])
-
-            # Train Critic
-            for subiter in range(config.trajectory_step):
-                ind_array = np.random.choice(range(config.batch_size * config.trajectory_step), config.batch_size)
-                # ind_array = range(subiter*config.batch_size, (subiter+1)*config.batch_size)
-
-                feed1 = {
-                actor.input_: states_np[ind_array],
-                actor.reward_: V_value[ind_array],
-                actor.graph_last_timestep: states_cor_mat[ind_array],
-                actor.is_train:True}
-
-                base_op, train_step2 = sess.run([actor.base_op,
-                    actor.train_step2], feed_dict=feed1)
-
-
-            # Computed_Vnew=[]
-            # for subiter in range(config.trajectory_step):
-            #     ind_array = range(subiter*config.batch_size, (subiter+1)*config.batch_size)
-            #     feed = {
-            #     actor.input_: states_np[ind_array],
-            #     # actor.reward_:rewards[ind_array],
-            #     actor.graph_last_timestep: states_cor_mat[ind_array],
-            #     actor.is_train:False}
-            #
-            #     V_end = sess.run([actor.critic.predictions], feed_dict=feed)
-            #     Computed_Vnew.append(V_end)
-            #
-            # Computed_Vnew = np.reshape(np.array(Computed_Vnew), [config.batch_size*config.trajectory_step])
-
-            # Train Actor
-            for subiter in range(config.trajectory_step):
-                ind_array = np.random.choice(range(config.batch_size * config.trajectory_step), config.batch_size)
-                # ind_array = range(subiter*config.batch_size, (subiter+1)*config.batch_size)
-
-                feed2 = {
-                actor.input_: states_np[ind_array],
-                actor.reward_:V_value[ind_array], actor.graphs_:actions[ind_array],
-                actor.graph_last_timestep: states_cor_mat[ind_array],
-                actor.is_train:True}
-
-                summary, base_op, score_test, probs, graph_batch, \
-                    reward_batch, reward_avg_baseline, train_step1 = sess.run([actor.merged, actor.base_op,
-                    actor.test_scores, actor.log_softmax, actor.graph_batch, actor.reward_batch, actor.avg_baseline, actor.train_step1], feed_dict=feed2)
-
-
+            summary, base_op, score_test, probs, graph_batch, \
+                reward_batch, reward_avg_baseline, train_step1, train_step2 = sess.run([actor.merged, actor.base_op,
+                actor.test_scores, actor.log_softmax, actor.graph_batch, actor.reward_batch, actor.avg_baseline, actor.train_step1,
+                actor.train_step2], feed_dict=feed)
 
             if config.verbose:
                 _logger.info('Finish updating actor and critic network using reward calculated')
