@@ -24,6 +24,8 @@ class SingleLayerDecoder(object):
         self.mask_scores = []
         self.entropy = []
 
+        self.config = config
+
 
 
     def decode(self, encoder_output, cor_mat):
@@ -31,7 +33,7 @@ class SingleLayerDecoder(object):
         with tf.variable_scope('singe_layer_nn'):
             W_l = tf.get_variable('weights_left', [self.input_embed, self.decoder_hidden_dim], initializer=self.initializer)
             W_r = tf.get_variable('weights_right', [self.input_embed, self.decoder_hidden_dim], initializer=self.initializer)
-            U = tf.get_variable('U', [self.decoder_hidden_dim+8], initializer=self.initializer)    # Aggregate across decoder hidden dim
+            U = tf.get_variable('U', [self.decoder_hidden_dim+self.config.concat_dim], initializer=self.initializer)    # Aggregate across decoder hidden dim
 
 
         dot_l = tf.einsum('ijk, kl->ijl', encoder_output, W_l)

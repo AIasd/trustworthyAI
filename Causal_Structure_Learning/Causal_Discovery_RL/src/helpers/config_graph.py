@@ -41,6 +41,7 @@ data_arg.add_argument('--input_dimension', type=int, default=64, help='dimension
 data_arg.add_argument('--max_length', type=int, default=6, help='number of variables')
 data_arg.add_argument('--data_size', type=int, default=3000, help='Number of observational samples')
 data_arg.add_argument('--trajectory_step', type=int, default=2, help='Number of trajectory_step')
+data_arg.add_argument('--concat_dim', type=int, default=1, help='concat_dim')
 
 
 data_arg.add_argument('--read_data', action="store_true", help='read existing_data or not')

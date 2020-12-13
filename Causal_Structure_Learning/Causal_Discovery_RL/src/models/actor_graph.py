@@ -25,7 +25,7 @@ class Actor(object):
 
     def __init__(self, config):
         self.config = config
-        self.is_train = True
+        # self.is_train = True
         # Data config
         self.batch_size = config.batch_size  # batch size
         self.max_length = config.max_length
@@ -55,6 +55,7 @@ class Actor(object):
         # addition:
         self.graph_last_timestep = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.max_length], name="graph_last_timestep")
         self.V_end_ = tf.placeholder(tf.float32, [self.batch_size], name='V_end')
+        self.is_train = tf.placeholder(tf.bool, None, name='is_train')
 
 
         self.reward_ = tf.placeholder(tf.float32, [self.batch_size], name='reward_')
@@ -74,7 +75,7 @@ class Actor(object):
 
             filter_1 = tf.Variable(tf.random_normal([1,1,1,32]), trainable=trainable)
             filter_2 = tf.Variable(tf.random_normal([1,1,32,32]), trainable=trainable)
-            filter_3 = tf.Variable(tf.random_normal([1,1,32,8]), trainable=trainable)
+            filter_3 = tf.Variable(tf.random_normal([1,1,32,self.config.concat_dim]), trainable=trainable)
 
             h1 = tf.nn.conv2d(in_tensor, filter=filter_1, padding="SAME")
             h1 = tf.nn.conv2d( tf.nn.relu(h1), filter=filter_2, padding="SAME" )
@@ -152,70 +153,71 @@ class Actor(object):
                                          self.alpha * self.avg_baseline + (1.0 - self.alpha) * reward_mean)
                 tf.summary.scalar('average baseline', self.avg_baseline)
 
-            # with tf.name_scope('reinforce'):
-            #     # Actor learning rate
-            #     self.lr1 = tf.train.exponential_decay(self.lr1_start, self.global_step, self.lr1_decay_step,
-            #                                           self.lr1_decay_rate, staircase=False, name="learning_rate1")
-            #     # Optimizer
-            #     self.opt1 = tf.train.AdamOptimizer(learning_rate=self.lr1, beta1=0.9, beta2=0.99, epsilon=0.0000001)
-            #     # Discounted reward
-            #     self.reward_baseline = tf.stop_gradient(
-            #         self.reward - self.avg_baseline - self.critic.predictions)  # [Batch size, 1]
-            #     variable_summaries('reward_baseline', self.reward_baseline, with_max_min=True)
-            #     # Loss
-            #     self.loss1 = tf.reduce_mean(self.reward_baseline * self.log_softmax, 0) -  1* self.lr1 * tf.reduce_mean(self.entropy_regularization, 0)
-            #     tf.summary.scalar('loss1', self.loss1)
-            #     # Minimize step
-            #     gvs = self.opt1.compute_gradients(self.loss1)
-            #     capped_gvs = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs if grad is not None]  # L2 clip
-            #     self.train_step1 = self.opt1.apply_gradients(capped_gvs, global_step=self.global_step)
-            #
-            # with tf.name_scope('state_value'):
-            #     # Critic learning rate
-            #     self.lr2 = tf.train.exponential_decay(self.lr2_start, self.global_step2, self.lr2_decay_step,
-            #                                           self.lr2_decay_rate, staircase=False, name="learning_rate1")
-            #     # Optimizer
-            #     self.opt2 = tf.train.AdamOptimizer(learning_rate=self.lr2, beta1=0.9, beta2=0.99, epsilon=0.0000001)
-            #     # Loss
-            #     weights_ = 1.0  # weights_ = tf.exp(self.log_softmax-tf.reduce_max(self.log_softmax)) # probs / max_prob
-            #     self.loss2 = tf.losses.mean_squared_error(self.reward - self.avg_baseline, self.critic.predictions,
-            #                                               weights=weights_)
-            #     tf.summary.scalar('loss2', self.loss2)
-            #     # Minimize step
-            #     gvs2 = self.opt2.compute_gradients(self.loss2)
-            #     capped_gvs2 = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs2 if grad is not None]  # L2 clip
-            #
-            #     # TBD: try self.opt2 bug???
-            #     self.train_step2 = self.opt1.apply_gradients(capped_gvs2, global_step=self.global_step2)
+            if not self.config.use_trajectory:
+                with tf.name_scope('reinforce'):
+                    # Actor learning rate
+                    self.lr1 = tf.train.exponential_decay(self.lr1_start, self.global_step, self.lr1_decay_step,
+                                                          self.lr1_decay_rate, staircase=False, name="learning_rate1")
+                    # Optimizer
+                    self.opt1 = tf.train.AdamOptimizer(learning_rate=self.lr1, beta1=0.9, beta2=0.99, epsilon=0.0000001)
+                    # Discounted reward
+                    self.reward_baseline = tf.stop_gradient(
+                        self.reward - self.avg_baseline - self.critic.predictions)  # [Batch size, 1]
+                    variable_summaries('reward_baseline', self.reward_baseline, with_max_min=True)
+                    # Loss
+                    self.loss1 = tf.reduce_mean(self.reward_baseline * self.log_softmax, 0) -  1* self.lr1 * tf.reduce_mean(self.entropy_regularization, 0)
+                    tf.summary.scalar('loss1', self.loss1)
+                    # Minimize step
+                    gvs = self.opt1.compute_gradients(self.loss1)
+                    capped_gvs = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs if grad is not None]  # L2 clip
+                    self.train_step1 = self.opt1.apply_gradients(capped_gvs, global_step=self.global_step)
 
-            with tf.name_scope('train_critic'):
-                self.lr3 = tf.train.exponential_decay(self.lr2_start, self.global_step2, self.lr2_decay_step,
-                                                      self.lr2_decay_rate, staircase=False, name="learning_rate1")
-                # Optimizer
-                self.opt3 = tf.train.AdamOptimizer(learning_rate=self.lr3, beta1=0.9, beta2=0.99, epsilon=0.0000001)
-                # Loss
-                weights_ = 1.0  # weights_ = tf.exp(self.log_softmax-tf.reduce_max(self.log_softmax)) # probs / max_prob
-                self.loss3 = tf.losses.mean_squared_error(self.V_end_, self.critic.predictions, weights=weights_)
-                tf.summary.scalar('loss3', self.loss3)
-                # Minimize step
-                gvs3 = self.opt3.compute_gradients(self.loss3)
-                capped_gvs3 = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs3 if grad is not None]  # L2 clip
-                self.train_step3 = self.opt3.apply_gradients(capped_gvs3, global_step=self.global_step2)
+                with tf.name_scope('state_value'):
+                    # Critic learning rate
+                    self.lr2 = tf.train.exponential_decay(self.lr2_start, self.global_step2, self.lr2_decay_step,
+                                                          self.lr2_decay_rate, staircase=False, name="learning_rate1")
+                    # Optimizer
+                    self.opt2 = tf.train.AdamOptimizer(learning_rate=self.lr2, beta1=0.9, beta2=0.99, epsilon=0.0000001)
+                    # Loss
+                    weights_ = 1.0  # weights_ = tf.exp(self.log_softmax-tf.reduce_max(self.log_softmax)) # probs / max_prob
+                    self.loss2 = tf.losses.mean_squared_error(self.reward - self.avg_baseline, self.critic.predictions,
+                                                              weights=weights_)
+                    tf.summary.scalar('loss2', self.loss2)
+                    # Minimize step
+                    gvs2 = self.opt2.compute_gradients(self.loss2)
+                    capped_gvs2 = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs2 if grad is not None]  # L2 clip
 
-            with tf.name_scope('train_actor'):
-                # Actor learning rate
-                self.lr4 = tf.train.exponential_decay(self.lr1_start, self.global_step, self.lr1_decay_step,
-                                                      self.lr1_decay_rate, staircase=False, name="learning_rate1")
-                # Optimizer
-                self.opt4 = tf.train.AdamOptimizer(learning_rate=self.lr4, beta1=0.9, beta2=0.99, epsilon=0.0000001)
-                # Discounted reward
-                self.reward_baseline = tf.stop_gradient(
-                    self.V_end_ - self.avg_baseline - self.critic.predictions)  # [Batch size, 1]
-                variable_summaries('reward_baseline', self.reward_baseline, with_max_min=True)
-                # Loss
-                self.loss4 = tf.reduce_mean(self.reward_baseline * self.log_softmax, 0) -  1* self.lr4 * tf.reduce_mean(self.entropy_regularization, 0)
-                tf.summary.scalar('loss4', self.loss4)
-                # Minimize step
-                gvs = self.opt4.compute_gradients(self.loss4)
-                capped_gvs = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs if grad is not None]  # L2 clip
-                self.train_step4 = self.opt4.apply_gradients(capped_gvs, global_step=self.global_step)
+                    # TBD: try self.opt2 bug???
+                    self.train_step2 = self.opt2.apply_gradients(capped_gvs2, global_step=self.global_step2)
+            else:
+                with tf.name_scope('train_critic'):
+                    self.lr3 = tf.train.exponential_decay(self.lr2_start, self.global_step2, self.lr2_decay_step,
+                                                          self.lr2_decay_rate, staircase=False, name="learning_rate1")
+                    # Optimizer
+                    self.opt3 = tf.train.AdamOptimizer(learning_rate=self.lr3, beta1=0.9, beta2=0.99, epsilon=0.0000001)
+                    # Loss
+                    weights_ = 1.0  # weights_ = tf.exp(self.log_softmax-tf.reduce_max(self.log_softmax)) # probs / max_prob
+                    self.loss3 = tf.losses.mean_squared_error(self.V_end_-self.avg_baseline, self.critic.predictions, weights=weights_)
+                    tf.summary.scalar('loss3', self.loss3)
+                    # Minimize step
+                    gvs3 = self.opt3.compute_gradients(self.loss3)
+                    capped_gvs3 = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs3 if grad is not None]  # L2 clip
+                    self.train_step3 = self.opt3.apply_gradients(capped_gvs3, global_step=self.global_step2)
+
+                with tf.name_scope('train_actor'):
+                    # Actor learning rate
+                    self.lr4 = tf.train.exponential_decay(self.lr1_start, self.global_step, self.lr1_decay_step,
+                                                          self.lr1_decay_rate, staircase=False, name="learning_rate1")
+                    # Optimizer
+                    self.opt4 = tf.train.AdamOptimizer(learning_rate=self.lr4, beta1=0.9, beta2=0.99, epsilon=0.0000001)
+                    # Discounted reward
+                    self.reward_baseline = tf.stop_gradient(
+                        self.V_end_ - self.avg_baseline - self.critic.predictions)  # [Batch size, 1]
+                    variable_summaries('reward_baseline', self.reward_baseline, with_max_min=True)
+                    # Loss
+                    self.loss4 = tf.reduce_mean(self.reward_baseline * self.log_softmax, 0) -  1* self.lr4 * tf.reduce_mean(self.entropy_regularization, 0)
+                    tf.summary.scalar('loss4', self.loss4)
+                    # Minimize step
+                    gvs = self.opt4.compute_gradients(self.loss4)
+                    capped_gvs = [(tf.clip_by_norm(grad, 1.), var) for grad, var in gvs if grad is not None]  # L2 clip
+                    self.train_step4 = self.opt4.apply_gradients(capped_gvs, global_step=self.global_step)
