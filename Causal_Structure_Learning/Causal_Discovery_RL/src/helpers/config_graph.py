@@ -36,10 +36,12 @@ net_arg.add_argument('--bias_initial_value', type=float, default=False,
 
 # Data
 data_arg = add_argument_group('Data')
-data_arg.add_argument('--batch_size', type=int, default=64, help='batch size for training')
+data_arg.add_argument('--batch_size', type=int, default=65, help='batch size for training')
 data_arg.add_argument('--input_dimension', type=int, default=64, help='dimension of reshaped vector') # reshaped
 data_arg.add_argument('--max_length', type=int, default=6, help='number of variables')
 data_arg.add_argument('--data_size', type=int, default=3000, help='Number of observational samples')
+data_arg.add_argument('--trajectory_step', type=int, default=2, help='Number of trajectory_step')
+
 
 data_arg.add_argument('--read_data', action="store_true", help='read existing_data or not')
 data_arg.add_argument('--data_path', type=str, default='data', help='data path for read data')
@@ -77,12 +79,12 @@ train_arg.add_argument('--l1_graph_reg', type=float, default=0.0, help='L1 graph
 # Misc
 misc_arg = add_argument_group('User options') #####################################################
 
-misc_arg.add_argument('--inference_mode', type=str2bool, default=True, help='switch to inference mode when model is trained') 
+misc_arg.add_argument('--inference_mode', type=str2bool, default=True, help='switch to inference mode when model is trained')
 misc_arg.add_argument('--restore_model', type=str2bool, default=False, help='whether or not model is retrieved')
 
 misc_arg.add_argument('--save_to', type=str, default='20/model', help='saver sub directory')
 misc_arg.add_argument('--restore_from', type=str, default='20/model', help='loader sub directory')  ###
-misc_arg.add_argument('--log_dir', type=str, default='summary/20/repo', help='summary writer log directory') 
+misc_arg.add_argument('--log_dir', type=str, default='summary/20/repo', help='summary writer log directory')
 misc_arg.add_argument('--verbose', type=bool, default=False, help='print detailed logging or not')
 
 

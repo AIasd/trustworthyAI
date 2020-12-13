@@ -24,7 +24,6 @@ class SingleLayerDecoder(object):
         self.mask_scores = []
         self.entropy = []
 
-        # addition:
 
 
     def decode(self, encoder_output, cor_mat):
@@ -32,7 +31,7 @@ class SingleLayerDecoder(object):
         with tf.variable_scope('singe_layer_nn'):
             W_l = tf.get_variable('weights_left', [self.input_embed, self.decoder_hidden_dim], initializer=self.initializer)
             W_r = tf.get_variable('weights_right', [self.input_embed, self.decoder_hidden_dim], initializer=self.initializer)
-            U = tf.get_variable('U', [self.decoder_hidden_dim], initializer=self.initializer)    # Aggregate across decoder hidden dim
+            U = tf.get_variable('U', [self.decoder_hidden_dim+8], initializer=self.initializer)    # Aggregate across decoder hidden dim
 
 
         dot_l = tf.einsum('ijk, kl->ijl', encoder_output, W_l)
@@ -41,8 +40,11 @@ class SingleLayerDecoder(object):
         tiled_l = tf.tile(tf.expand_dims(dot_l, axis=2), (1, 1, self.max_length, 1))
         tiled_r = tf.tile(tf.expand_dims(dot_r, axis=1), (1, self.max_length, 1, 1))
 
+        tmp = tiled_l + tiled_r
+        tmp_cat = tf.concat([tmp, cor_mat], axis=3)  # concatenate embedding on channel dimension
+
         if self.decoder_activation == 'tanh':    # Original implementation by paper
-            final_sum = tf.nn.tanh(tiled_l + tiled_r + cor_mat) #TODO: cor_mat expand dim.
+            final_sum = tf.nn.tanh(tmp_cat) #TODO: cor_mat expand dim.
         elif self.decoder_activation == 'relu':
             final_sum = tf.nn.relu(tiled_l + tiled_r)
         elif self.decoder_activation == 'none':    # Without activation function
