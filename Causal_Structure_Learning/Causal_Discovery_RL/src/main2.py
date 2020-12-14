@@ -47,8 +47,11 @@ def discounted_rewards(r, gamma, V_end):
     return discounted_r
 
 def main():
+    # Get running configuration
+    config, _ = get_config()
+    
     # Setup for output directory and logging
-    output_dir = 'output/{}'.format(datetime.now(timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d_%H-%M-%S-%f')[:-3])
+    output_dir = 'output/{}_{}steps_gamma{}'.format(datetime.now(timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d_%H-%M-%S-%f')[:-3], config.trajectory_step, config.gamma)
     create_dir(output_dir)
     LogHelper.setup(log_path='{}/training.log'.format(output_dir),
                     level_str='INFO')
@@ -56,8 +59,7 @@ def main():
     _logger.info('Python version is {}'.format(platform.python_version()))
     _logger.info('Current commit of code: ___')
 
-    # Get running configuration
-    config, _ = get_config()
+
     config.save_model_path = '{}/model'.format(output_dir)
     # config.restore_model_path = '{}/model'.format(output_dir)
     config.summary_dir = '{}/summary'.format(output_dir)
@@ -172,7 +174,7 @@ def main():
         writer = tf.summary.FileWriter(config.summary_dir, sess.graph)
 
         _logger.info('Starting training.')
-
+        _logger.info('\n'*2, 'gamma:', config.gamma, 'trajectory_step:', config.trajectory_step, '\n'*2)
 
 
         graph_last_timestep = np.zeros([config.batch_size, config.max_length, config.max_length])
@@ -294,6 +296,7 @@ def main():
             # Computed_Vnew = np.reshape(np.array(Computed_Vnew), [config.batch_size*config.trajectory_step])
 
             # Train Actor
+
             for subiter in range(config.trajectory_step):
                 ind_array = np.random.choice(range(config.batch_size * config.trajectory_step), config.batch_size)
                 # ind_array = range(subiter*config.batch_size, (subiter+1)*config.batch_size)
@@ -307,6 +310,8 @@ def main():
                 summary, base_op, score_test, probs, graph_batch, \
                     reward_batch, reward_avg_baseline, train_step1 = sess.run([actor.merged, actor.base_op,
                     actor.test_scores, actor.log_softmax, actor.graph_batch, actor.reward_batch, actor.avg_baseline, actor.train_step1], feed_dict=feed2)
+
+
 
 
 
@@ -338,11 +343,25 @@ def main():
                 # _logger.info('=====================================')
 
                 plt.figure(1)
-                plt.plot(rewards_batches, label='reward per batch')
-                plt.plot(max_rewards, label='max reward')
+
+                max_rewards_re = callreward.update_scores(max_rewards, lambda1, lambda2)
+                rewards_batches_re = callreward.update_scores(rewards_batches, lambda1, lambda2)
+                plt.plot(rewards_batches_re, label='reward per batch')
+                plt.plot(max_rewards_re, label='max reward')
                 plt.legend()
                 plt.savefig('{}/reward_batch_average.png'.format(config.plot_dir))
                 plt.close()
+
+
+                ind_array = range((config.trajectory_step-1)*config.batch_size, (config.trajectory_step)*config.batch_size)
+                feed2 = {
+                actor.input_: states_np[ind_array],
+                actor.reward_:V_value[ind_array], actor.graphs_:actions[ind_array],
+                actor.graph_last_timestep: states_cor_mat[ind_array],
+                actor.is_train:False}
+                graph_batch = sess.run(actor.graph_batch, feed_dict=feed2)
+
+
 
                 image_count += 1
                 # this draw the average graph per batch.
