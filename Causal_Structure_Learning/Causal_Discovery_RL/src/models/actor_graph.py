@@ -56,10 +56,11 @@ class Actor(object):
         self.graph_last_timestep = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.max_length], name="graph_last_timestep")
         self.V_end_ = tf.placeholder(tf.float32, [self.batch_size], name='V_end')
         self.is_train = tf.placeholder(tf.bool, None, name='is_train')
+        self.log_softmax_prev = tf.placeholder(tf.float32, [self.batch_size], name='log_softmax_prev')
 
 
         self.reward_ = tf.placeholder(tf.float32, [self.batch_size], name='reward_')
-        self.graphs_ = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.max_length], name='input_graphs')
+        self.graphs_ = tf.placeholder(tf.float32, [self.batch_size, self.max_length, self.max_length], name='graphs_')
 
         self.build_permutation()
         self.build_critic()
@@ -165,7 +166,14 @@ class Actor(object):
                         self.reward - self.avg_baseline - self.critic.predictions)  # [Batch size, 1]
                     variable_summaries('reward_baseline', self.reward_baseline, with_max_min=True)
                     # Loss
-                    self.loss1 = tf.reduce_mean(self.reward_baseline * self.log_softmax, 0) -  1* self.lr1 * tf.reduce_mean(self.entropy_regularization, 0)
+                    if self.config.use_ppo:
+                        epsilon = self.config.epsilon
+                        tmp = self.log_softmax-self.log_softmax_prev
+                        tmp = tf.math.minimum(self.reward_baseline * tf.clip_by_value(tmp, 1-epsilon, 1+epsilon), self.reward_baseline * tmp)
+                        self.loss1 = tf.reduce_mean(tmp, 0) -  1* self.lr1 * tf.reduce_mean(self.entropy_regularization, 0)
+                    else:
+                        self.loss1 = tf.reduce_mean(self.reward_baseline * self.log_softmax, 0) -  1* self.lr1 * tf.reduce_mean(self.entropy_regularization, 0)
+
                     tf.summary.scalar('loss1', self.loss1)
                     # Minimize step
                     gvs = self.opt1.compute_gradients(self.loss1)
